@@ -1,0 +1,7 @@
+venv/
+_pycache_/
+*.pyc
+titanic_data/
+modelo_titanic.keras
+gestor-notas-*.json
+.streamlit/secrets.toml
