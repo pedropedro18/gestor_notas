@@ -20,7 +20,7 @@ def obter_aba():
     creds = Credentials.from_service_account_info(
         st.secrets["gcp_service_account"], scopes=scopes
     )
-    return gspread.authorize(creds).open(NOME_PLANILHA).sheet1
+    return gspread.authorize(creds).open_by_key("12lPK894LS8RMpNu8LOeL0UGasjIwX2JKctSsNfSg52E").sheet1
 
 
 def carregar_dados():
@@ -30,8 +30,9 @@ def carregar_dados():
         if col not in df.columns:
             df[col] = ""
     df = df[COLUNAS]
-    for col in COLUNAS_NOTA + ["presença"]:
+    for col in COLUNAS_NOTA:
         df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["Média"] = df[COLUNAS_NOTA].mean(axis=1).round(2)
     return df
 
 
@@ -40,3 +41,76 @@ def guardar_dados(df):
     limpo = df.fillna("").astype(object)
     aba.clear()
     aba.update([COLUNAS] + limpo.values.tolist())
+
+
+# ---------------- INTERFACE ----------------
+
+st.title("📚 Gestor de Notas")
+
+df = carregar_dados()
+
+tab1, tab2, tab3 = st.tabs(["🔍 Pesquisar", "✏️ Introduzir / Atualizar", "📋 Listar todos"])
+
+# --- TAB 1: Pesquisar ---
+with tab1:
+    st.subheader("Pesquisar aluno")
+    nome_pesquisa = st.text_input("Nome do aluno", key="pesquisa_nome")
+    if nome_pesquisa:
+        resultado = df[df["Nome"].str.contains(nome_pesquisa, case=False, na=False)]
+        if resultado.empty:
+            st.warning("Nenhum aluno encontrado.")
+        else:
+            st.dataframe(resultado, use_container_width=True)
+    else:
+        st.info("Escreve um nome para pesquisar.")
+
+# --- TAB 2: Introduzir / Atualizar ---
+with tab2:
+    st.subheader("Introduzir ou atualizar aluno")
+    with st.form("form_aluno", clear_on_submit=True):
+        nome = st.text_input("Nome")
+        turma = st.text_input("Turma")
+        nivel = st.text_input("Nível")
+
+        notas = []
+        cols = st.columns(len(COLUNAS_NOTA))
+        for i, col_nome in enumerate(COLUNAS_NOTA):
+            with cols[i]:
+                nota = st.number_input(
+                    col_nome.capitalize(), min_value=0.0, max_value=20.0,
+                    step=0.1, key=f"nota_{col_nome}"
+                )
+                notas.append(nota)
+
+        submeter = st.form_submit_button("Guardar")
+
+        if submeter:
+            if not nome.strip():
+                st.error("O nome é obrigatório.")
+            else:
+                novo_registo = {"Nome": nome, "Turma": turma, "Nivel": nivel}
+                for i, col_nome in enumerate(COLUNAS_NOTA):
+                    novo_registo[col_nome] = notas[i]
+
+                # Remove entrada existente com o mesmo nome (atualizar) e adiciona a nova
+                df_atualizado = df[df["Nome"] != nome]
+                df_atualizado = pd.concat(
+                    [df_atualizado, pd.DataFrame([novo_registo])], ignore_index=True
+                )
+                df_atualizado[COLUNAS_NOTA] = df_atualizado[COLUNAS_NOTA].apply(
+                    pd.to_numeric, errors="coerce"
+                )
+                df_atualizado["Média"] = df_atualizado[COLUNAS_NOTA].mean(axis=1).round(2)
+
+                guardar_dados(df_atualizado)
+                st.success(f"Aluno '{nome}' guardado com sucesso!")
+                st.cache_resource.clear()
+                st.rerun()
+
+# --- TAB 3: Listar todos ---
+with tab3:
+    st.subheader("Todos os alunos")
+    if df.empty:
+        st.info("Ainda não há alunos registados.")
+    else:
+        st.dataframe(df, use_container_width=True)
