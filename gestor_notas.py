@@ -11,6 +11,35 @@ COLUNAS = ["Nome", "Turma", "Nivel"] + COLUNAS_NOTA + ["Média"]
 st.set_page_config(page_title="Gestor de Notas", page_icon="📚", layout="wide")
 
 
+# ---------------- LOGIN ----------------
+def check_password():
+    def password_entered():
+        user = st.session_state["username"]
+        pwd = st.session_state["password"]
+        if user in st.secrets["passwords"] and pwd == st.secrets["passwords"][user]:
+            st.session_state["password_correct"] = True
+            st.session_state["user"] = user
+            del st.session_state["password"]
+        else:
+            st.session_state["password_correct"] = False
+
+    if st.session_state.get("password_correct", False):
+        return True
+
+    st.text_input("Utilizador", key="username")
+    st.text_input("Password", type="password", key="password", on_change=password_entered)
+
+    if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+        st.error("Utilizador ou password incorretos")
+
+    return False
+
+
+if not check_password():
+    st.stop()
+# ----------------------------------------
+
+
 @st.cache_resource
 def obter_aba():
     scopes = [
