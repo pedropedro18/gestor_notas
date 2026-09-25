@@ -78,7 +78,12 @@ st.title("📚 Gestor de Notas")
 
 df = carregar_dados()
 
-tab1, tab2, tab3 = st.tabs(["🔍 Pesquisar", "✏️ Introduzir / Atualizar", "📋 Listar todos"])
+if st.session_state["user"] == "admin":
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["🔍 Pesquisar", "✏️ Introduzir / Atualizar", "📋 Listar todos", "🗑️ Remover aluno"]
+    )
+else:
+    tab1, tab2, tab3 = st.tabs(["🔍 Pesquisar", "✏️ Introduzir / Atualizar", "📋 Listar todos"])
 
 # --- TAB 1: Pesquisar ---
 with tab1:
@@ -143,3 +148,18 @@ with tab3:
         st.info("Ainda não há alunos registados.")
     else:
         st.dataframe(df, use_container_width=True)
+
+# --- TAB 4: Remover aluno (só admin) ---
+if st.session_state["user"] == "admin":
+    with tab4:
+        st.subheader("Remover aluno")
+        if df.empty:
+            st.info("Não há alunos para remover.")
+        else:
+            aluno_remover = st.selectbox("Escolhe o aluno a remover", df["Nome"].tolist())
+            if st.button("🗑️ Remover", type="primary"):
+                df_atualizado = df[df["Nome"] != aluno_remover]
+                guardar_dados(df_atualizado)
+                st.success(f"Aluno '{aluno_remover}' removido com sucesso!")
+                st.cache_resource.clear()
+                st.rerun()
