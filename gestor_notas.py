@@ -6,7 +6,7 @@ from google.oauth2.service_account import Credentials
 NOME_PLANILHA = "notas"
 
 COLUNAS_NOTA = ["teste1", "teste2", "teste3"]
-COLUNAS = ["Nome", "Turma", "Nivel"] + COLUNAS_NOTA + ["Média"]
+COLUNAS = ["Nome", "Turma", "Classe"] + COLUNAS_NOTA + ["Média"]
 
 st.set_page_config(page_title="Gestor de Notas", page_icon="📚", layout="wide")
 
@@ -88,14 +88,42 @@ else:
 # --- TAB 1: Pesquisar ---
 with tab1:
     st.subheader("Pesquisar aluno")
-    nome_pesquisa = st.text_input("Nome do aluno", key="pesquisa_nome")
-    if nome_pesquisa:
-        resultado = df[df["Nome"].str.contains(nome_pesquisa, case=False, na=False)]
+
+    tipo_pesquisa = st.radio(
+        "Pesquisar por:", ["Nome", "Turma", "Classe"], horizontal=True, key="tipo_pesquisa"
+    )
+
+    if tipo_pesquisa == "Nome":
+        nome_pesquisa = st.text_input("Nome do aluno", key="pesquisa_nome")
+        if nome_pesquisa:
+            resultado = df[df["Nome"].str.contains(nome_pesquisa, case=False, na=False)]
+        else:
+            resultado = None
+
+    elif tipo_pesquisa == "Turma":
+        turmas = sorted([t for t in df["Turma"].unique().tolist() if str(t).strip() != ""])
+        if turmas:
+            turma_escolhida = st.selectbox("Escolhe a turma", turmas, key="pesquisa_turma")
+            resultado = df[df["Turma"] == turma_escolhida]
+        else:
+            st.info("Ainda não há turmas registadas.")
+            resultado = None
+
+    else:  # Classe
+        classes = sorted([c for c in df["Classe"].unique().tolist() if str(c).strip() != ""])
+        if classes:
+            classe_escolhida = st.selectbox("Escolhe a classe", classes, key="pesquisa_classe")
+            resultado = df[df["Classe"] == classe_escolhida]
+        else:
+            st.info("Ainda não há classes registadas.")
+            resultado = None
+
+    if resultado is not None:
         if resultado.empty:
             st.warning("Nenhum aluno encontrado.")
         else:
             st.dataframe(resultado, use_container_width=True)
-    else:
+    elif tipo_pesquisa == "Nome":
         st.info("Escreve um nome para pesquisar.")
 
 # --- TAB 2: Introduzir / Atualizar ---
@@ -104,7 +132,7 @@ with tab2:
     with st.form("form_aluno", clear_on_submit=True):
         nome = st.text_input("Nome")
         turma = st.text_input("Turma")
-        nivel = st.text_input("Nível")
+        classe = st.text_input("Classe")
 
         notas = []
         cols = st.columns(len(COLUNAS_NOTA))
@@ -121,13 +149,20 @@ with tab2:
         if submeter:
             if not nome.strip():
                 st.error("O nome é obrigatório.")
+            elif not turma.strip():
+                st.error("A turma é obrigatória.")
+            elif not classe.strip():
+                st.error("A classe é obrigatória.")
             else:
-                novo_registo = {"Nome": nome, "Turma": turma, "Nivel": nivel}
+                novo_registo = {"Nome": nome, "Turma": turma, "Classe": classe}
                 for i, col_nome in enumerate(COLUNAS_NOTA):
                     novo_registo[col_nome] = notas[i]
 
-                # Remove entrada existente com o mesmo nome (atualizar) e adiciona a nova
-                df_atualizado = df[df["Nome"] != nome]
+                # Considera o mesmo aluno só se Nome + Turma + Classe coincidirem
+                mascara_existente = (
+                    (df["Nome"] == nome) & (df["Turma"] == turma) & (df["Classe"] == classe)
+                )
+                df_atualizado = df[~mascara_existente]
                 df_atualizado = pd.concat(
                     [df_atualizado, pd.DataFrame([novo_registo])], ignore_index=True
                 )
@@ -156,10 +191,15 @@ if st.session_state["user"] == "admin":
         if df.empty:
             st.info("Não há alunos para remover.")
         else:
-            aluno_remover = st.selectbox("Escolhe o aluno a remover", df["Nome"].tolist())
+            opcoes = [
+                f"{row['Nome']} — Turma {row['Turma']} — Classe {row['Classe']}"
+                for _, row in df.iterrows()
+            ]
+            escolha = st.selectbox("Escolhe o aluno a remover", opcoes)
+            indice_remover = opcoes.index(escolha)
             if st.button("🗑️ Remover", type="primary"):
-                df_atualizado = df[df["Nome"] != aluno_remover]
+                df_atualizado = df.drop(df.index[indice_remover])
                 guardar_dados(df_atualizado)
-                st.success(f"Aluno '{aluno_remover}' removido com sucesso!")
+                st.success(f"Aluno '{escolha}' removido com sucesso!")
                 st.cache_resource.clear()
                 st.rerun()
