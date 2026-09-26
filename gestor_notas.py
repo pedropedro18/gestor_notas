@@ -74,6 +74,14 @@ def guardar_dados(df):
 
 # ---------------- INTERFACE ----------------
 
+with st.sidebar:
+    st.markdown(f"👤 *Utilizador:* {st.session_state['user']}")
+    if st.button("🚪 Sair / Trocar utilizador"):
+        for chave in ["password_correct", "user", "username"]:
+            if chave in st.session_state:
+                del st.session_state[chave]
+        st.rerun()
+
 st.title("📚 Gestor de Notas")
 
 df = carregar_dados()
