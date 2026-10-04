@@ -106,16 +106,45 @@ def comprimir_foto(ficheiro):
     return ""
 
 
-def mostrar_atividades(atividades):
+def apagar_atividade(idx, linha):
+    """Apaga uma publicação da aba atividades (só admin)."""
+    aba = obter_aba_atividades()
+    numero_linha = idx + 2  # +1 do cabeçalho, +1 porque o índice começa em 0
+    atual = [x.strip() for x in aba.row_values(numero_linha)[:3]]
+    esperado = [str(linha["data"]).strip(), str(linha["turma"]).strip(),
+                str(linha["descricao"]).strip()]
+    st.session_state.pop("apagar_ativ", None)
+    carregar_atividades.clear()
+    if atual == esperado:
+        aba.delete_rows(numero_linha)
+        st.toast("Publicação apagada.")
+    else:
+        st.toast("A lista mudou entretanto. Tenta de novo.")
+    st.rerun()
+
+
+def mostrar_atividades(atividades, admin=False):
     if atividades.empty:
         st.info("Ainda não há atividades publicadas.")
         return
-    for _, linha in atividades.sort_values("data", ascending=False).iterrows():
+    for idx, linha in atividades.sort_values("data", ascending=False).iterrows():
         st.markdown(f"*📅 {linha['data']}*")
         if str(linha["descricao"]).strip():
             st.write(linha["descricao"])
         if str(linha["foto"]).strip():
             st.image(base64.b64decode(linha["foto"]), use_container_width=True)
+        if admin:
+            if st.session_state.get("apagar_ativ") == idx:
+                st.warning("Apagar esta publicação? Os pais deixam de a ver.")
+                c1, c2 = st.columns(2)
+                if c1.button("✅ Sim, apagar", key=f"sim_{idx}"):
+                    apagar_atividade(idx, linha)
+                if c2.button("Cancelar", key=f"nao_{idx}"):
+                    st.session_state.pop("apagar_ativ", None)
+                    st.rerun()
+            elif st.button("🗑️ Apagar", key=f"del_{idx}"):
+                st.session_state["apagar_ativ"] = idx
+                st.rerun()
         st.markdown("---")
 
 
@@ -416,7 +445,7 @@ with tab_ativ:
         st.markdown("---")
         st.markdown("*Já publicadas*")
         ativ = carregar_atividades()
-        mostrar_atividades(ativ[ativ["turma"].astype(str) == turma_a])
+        mostrar_atividades(ativ[ativ["turma"].astype(str) == turma_a], admin=eh_admin)
 
 # --- TAB 4: Remover aluno (só admin) ---
 if eh_admin:
