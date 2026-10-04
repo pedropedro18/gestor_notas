@@ -224,77 +224,96 @@ with tab3:
 with tab_pres:
     st.subheader("Presenças")
 
+    modo = st.radio(
+        "Opção:", ["Marcar chamada por turma", "Ver por turma"],
+        horizontal=True, key="pres_modo"
+    )
+
     alunos_validos = df[df["Nome"].astype(str).str.strip() != ""]
     if alunos_validos.empty:
         st.info("Ainda não há alunos registados.")
     else:
         turmas_p = sorted(alunos_validos["Turma"].astype(str).unique().tolist())
         turma_p = st.selectbox("Turma", turmas_p, key="pres_turma")
-
         da_turma = alunos_validos[alunos_validos["Turma"].astype(str) == turma_p]
-        classes_p = sorted(da_turma["Classe"].astype(str).unique().tolist())
-        classe_p = st.selectbox("Classe", classes_p, key="pres_classe")
-
-        grupo = da_turma[da_turma["Classe"].astype(str) == classe_p]
-        lista_alunos = grupo["Nome"].tolist()
-
-        dia = st.date_input("Data", date.today(), key="pres_data")
-
         existentes = carregar_presencas()
-        if existentes.empty:
-            ja_existe = False
-        else:
-            ja_existe = bool(
-                (
-                    (existentes["data"].astype(str) == str(dia))
-                    & (existentes["turma"].astype(str) == str(turma_p))
-                    & (existentes["classe"].astype(str) == str(classe_p))
-                ).any()
-            )
 
-        if ja_existe:
-            st.warning("Já há presenças guardadas para esta turma e classe neste dia.")
-
-        st.markdown("*Chamada* (desmarca quem faltou)")
-        marcados = {}
-        for a in lista_alunos:
-            marcados[a] = st.checkbox(
-                a, value=True, key=f"pres_{turma_p}{classe_p}{dia}_{a}"
-            )
-
-        if st.button("💾 Guardar presenças", disabled=ja_existe, key="pres_guardar"):
-            obter_aba_presencas().append_rows(
-                [
-                    [str(dia), str(turma_p), str(classe_p), a, 1 if p else 0]
-                    for a, p in marcados.items()
-                ]
-            )
-            st.success("Presenças guardadas!")
-            st.rerun()
-
-        if not existentes.empty:
-            st.markdown("---")
-            st.subheader("% de presenças")
-            ex = existentes[
-                (existentes["turma"].astype(str) == str(turma_p))
-                & (existentes["classe"].astype(str) == str(classe_p))
-            ]
+        # ---------- VER POR TURMA ----------
+        if modo == "Ver por turma":
+            ex = existentes[existentes["turma"].astype(str) == str(turma_p)]
             if ex.empty:
                 st.info("Ainda não há presenças para esta turma.")
             else:
+                st.markdown("*% de presença por aluno (toda a turma)*")
                 resumo = (
-                    ex.groupby("aluno")["presente"]
+                    ex.groupby(["aluno", "classe"])["presente"]
                     .agg(Aulas="count", Presenças="sum")
                     .reset_index()
                 )
                 resumo["% presença"] = (resumo["Presenças"] / resumo["Aulas"] * 100).round(0)
                 st.dataframe(resumo, use_container_width=True)
 
-                with st.expander("Histórico"):
+                st.markdown("*Presenças por dia*")
+                por_dia = (
+                    ex.groupby(["data", "classe"])["presente"]
+                    .agg(Alunos="count", Presentes="sum")
+                    .reset_index()
+                    .sort_values("data", ascending=False)
+                )
+                por_dia["Faltas"] = por_dia["Alunos"] - por_dia["Presentes"]
+                st.dataframe(por_dia, use_container_width=True)
+
+                with st.expander("Histórico completo"):
                     st.dataframe(
                         ex.sort_values("data", ascending=False),
                         use_container_width=True,
                     )
+
+        # ---------- MARCAR CHAMADA POR TURMA ----------
+        else:
+            dia = st.date_input("Data", date.today(), key="pres_data")
+
+            # Classes da turma que já têm presenças guardadas neste dia
+            if existentes.empty:
+                classes_feitas = set()
+            else:
+                feitas = existentes[
+                    (existentes["data"].astype(str) == str(dia))
+                    & (existentes["turma"].astype(str) == str(turma_p))
+                ]
+                classes_feitas = set(feitas["classe"].astype(str).unique().tolist())
+
+            classes_p = sorted(da_turma["Classe"].astype(str).unique().tolist())
+            classes_pendentes = [c for c in classes_p if c not in classes_feitas]
+
+            if classes_feitas:
+                st.warning(
+                    "Já há presenças guardadas neste dia para a(s) classe(s): "
+                    + ", ".join(sorted(classes_feitas))
+                )
+
+            if not classes_pendentes:
+                st.success("A chamada desta turma já está completa para este dia.")
+            else:
+                st.markdown("*Chamada da turma* (desmarca quem faltou)")
+                marcados = {}
+                for c in classes_pendentes:
+                    st.markdown(f"*Classe {c}*")
+                    grupo = da_turma[da_turma["Classe"].astype(str) == c]
+                    for a in grupo["Nome"].tolist():
+                        marcados[(c, a)] = st.checkbox(
+                            a, value=True, key=f"pres_{turma_p}{c}{dia}_{a}"
+                        )
+
+                if st.button("💾 Guardar presenças da turma", key="pres_guardar"):
+                    obter_aba_presencas().append_rows(
+                        [
+                            [str(dia), str(turma_p), str(c), a, 1 if p else 0]
+                            for (c, a), p in marcados.items()
+                        ]
+                    )
+                    st.success("Presenças guardadas!")
+                    st.rerun()
 
 # --- TAB 4: Remover aluno (só admin) ---
 if eh_admin:
