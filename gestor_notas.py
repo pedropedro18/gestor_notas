@@ -1,13 +1,18 @@
+import base64
+import io
 from datetime import date
 
 import gspread
 import pandas as pd
 import streamlit as st
 from google.oauth2.service_account import Credentials
+from PIL import Image, ImageOps
 
 PLANILHA_ID = "12lPK894LS8RMpNu8LOeL0UGasjIwX2JKctSsNfSg52E"
 NOME_ABA_PRESENCAS = "presencas"
 COLUNAS_PRESENCAS = ["data", "turma", "classe", "aluno", "presente"]
+NOME_ABA_ATIVIDADES = "atividades"
+COLUNAS_ATIV = ["data", "turma", "descricao", "foto"]
 
 COLUNAS_NOTA = ["teste1", "teste2", "teste3"]
 COLUNAS = ["Nome", "Turma", "Classe"] + COLUNAS_NOTA + ["Média"]
@@ -70,6 +75,58 @@ def obter_aba_presencas():
         return aba
 
 
+def obter_aba_atividades():
+    planilha = obter_planilha()
+    try:
+        return planilha.worksheet(NOME_ABA_ATIVIDADES)
+    except gspread.WorksheetNotFound:
+        aba = planilha.add_worksheet(NOME_ABA_ATIVIDADES, rows=2000, cols=4)
+        aba.append_row(COLUNAS_ATIV)
+        return aba
+
+
+@st.cache_data(ttl=60)
+def carregar_atividades():
+    registos = obter_aba_atividades().get_all_records()
+    return pd.DataFrame(registos, columns=COLUNAS_ATIV)
+
+
+def comprimir_foto(ficheiro):
+    """Reduz a foto para caber numa célula do Google Sheets (máx. 50 000 caracteres)."""
+    img = ImageOps.exif_transpose(Image.open(ficheiro)).convert("RGB")
+    for lado in (720, 560, 420, 320):
+        copia = img.copy()
+        copia.thumbnail((lado, lado))
+        for qualidade in (70, 55, 40):
+            buf = io.BytesIO()
+            copia.save(buf, "JPEG", quality=qualidade, optimize=True)
+            b64 = base64.b64encode(buf.getvalue()).decode()
+            if len(b64) <= 45000:
+                return b64
+    return ""
+
+
+def mostrar_atividades(atividades):
+    if atividades.empty:
+        st.info("Ainda não há atividades publicadas.")
+        return
+    for _, linha in atividades.sort_values("data", ascending=False).iterrows():
+        st.markdown(f"*📅 {linha['data']}*")
+        if str(linha["descricao"]).strip():
+            st.write(linha["descricao"])
+        if str(linha["foto"]).strip():
+            st.image(base64.b64decode(linha["foto"]), use_container_width=True)
+        st.markdown("---")
+
+
+def turma_do_encarregado(utilizador):
+    """Devolve a turma se o utilizador for encarregado de educação (secrets [pais_turma])."""
+    try:
+        return str(st.secrets["pais_turma"][utilizador])
+    except Exception:
+        return None
+
+
 def carregar_dados():
     registos = obter_aba().get_all_records()
     df = pd.DataFrame(registos)
@@ -107,19 +164,26 @@ with st.sidebar:
                 del st.session_state[chave]
         st.rerun()
 
+turma_pai = turma_do_encarregado(st.session_state["user"])
+if turma_pai is not None:
+    st.title("📸 Atividades da turma " + turma_pai)
+    ativ = carregar_atividades()
+    mostrar_atividades(ativ[ativ["turma"].astype(str) == turma_pai])
+    st.stop()
+
 st.title("📚 Gestor de Notas")
 
 df = carregar_dados()
 
 eh_admin = st.session_state["user"] == "admin"
 
-nomes_tabs = ["🔍 Pesquisar", "✏️ Introduzir / Atualizar", "📋 Listar todos", "✅ Presenças"]
+nomes_tabs = ["🔍 Pesquisar", "✏️ Introduzir / Atualizar", "📋 Listar todos", "✅ Presenças", "📸 Atividades"]
 if eh_admin:
     nomes_tabs.append("🗑️ Remover aluno")
 
 tabs = st.tabs(nomes_tabs)
-tab1, tab2, tab3, tab_pres = tabs[0], tabs[1], tabs[2], tabs[3]
-tab4 = tabs[4] if eh_admin else None
+tab1, tab2, tab3, tab_pres, tab_ativ = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4]
+tab4 = tabs[5] if eh_admin else None
 
 # --- TAB 1: Pesquisar ---
 with tab1:
@@ -314,6 +378,45 @@ with tab_pres:
                     )
                     st.success("Presenças guardadas!")
                     st.rerun()
+
+# --- TAB ATIVIDADES (os pais veem estas publicações) ---
+with tab_ativ:
+    st.subheader("Atividades da turma (visível para os pais)")
+
+    turmas_a = sorted(
+        [str(t) for t in df["Turma"].unique().tolist() if str(t).strip() != ""]
+    )
+    if not turmas_a:
+        st.info("Ainda não há turmas registadas.")
+    else:
+        turma_a = st.selectbox("Turma", turmas_a, key="ativ_turma")
+        dia_a = st.date_input("Data", date.today(), key="ativ_data")
+        desc_a = st.text_area("O que fizemos hoje", key="ativ_desc")
+        foto_a = st.file_uploader(
+            "Fotografia da aula", type=["jpg", "jpeg", "png"], key="ativ_foto"
+        )
+        if st.checkbox("Tirar fotografia com a câmara", key="ativ_cam"):
+            foto_a = st.camera_input("Câmara", key="ativ_camfoto") or foto_a
+
+        if st.button("📤 Publicar para os pais", key="ativ_publicar"):
+            if not desc_a.strip() and not foto_a:
+                st.error("Escreve uma descrição ou escolhe uma fotografia.")
+            else:
+                foto_b64 = comprimir_foto(foto_a) if foto_a else ""
+                if foto_a and not foto_b64:
+                    st.error("Não foi possível reduzir a fotografia. Tenta outra.")
+                else:
+                    obter_aba_atividades().append_row(
+                        [str(dia_a), turma_a, desc_a.strip(), foto_b64]
+                    )
+                    carregar_atividades.clear()
+                    st.success("Atividade publicada!")
+                    st.rerun()
+
+        st.markdown("---")
+        st.markdown("*Já publicadas*")
+        ativ = carregar_atividades()
+        mostrar_atividades(ativ[ativ["turma"].astype(str) == turma_a])
 
 # --- TAB 4: Remover aluno (só admin) ---
 if eh_admin:
