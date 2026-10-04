@@ -1,9 +1,13 @@
+from datetime import date
+
+import gspread
 import pandas as pd
 import streamlit as st
-import gspread
 from google.oauth2.service_account import Credentials
 
-NOME_PLANILHA = "notas"
+PLANILHA_ID = "12lPK894LS8RMpNu8LOeL0UGasjIwX2JKctSsNfSg52E"
+NOME_ABA_PRESENCAS = "presencas"
+COLUNAS_PRESENCAS = ["data", "turma", "classe", "aluno", "presente"]
 
 COLUNAS_NOTA = ["teste1", "teste2", "teste3"]
 COLUNAS = ["Nome", "Turma", "Classe"] + COLUNAS_NOTA + ["Média"]
@@ -41,7 +45,7 @@ if not check_password():
 
 
 @st.cache_resource
-def obter_aba():
+def obter_planilha():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
@@ -49,7 +53,21 @@ def obter_aba():
     creds = Credentials.from_service_account_info(
         st.secrets["gcp_service_account"], scopes=scopes
     )
-    return gspread.authorize(creds).open_by_key("12lPK894LS8RMpNu8LOeL0UGasjIwX2JKctSsNfSg52E").sheet1
+    return gspread.authorize(creds).open_by_key(PLANILHA_ID)
+
+
+def obter_aba():
+    return obter_planilha().sheet1
+
+
+def obter_aba_presencas():
+    planilha = obter_planilha()
+    try:
+        return planilha.worksheet(NOME_ABA_PRESENCAS)
+    except gspread.WorksheetNotFound:
+        aba = planilha.add_worksheet(NOME_ABA_PRESENCAS, rows=2000, cols=5)
+        aba.append_row(COLUNAS_PRESENCAS)
+        return aba
 
 
 def carregar_dados():
@@ -72,10 +90,17 @@ def guardar_dados(df):
     aba.update([COLUNAS] + limpo.values.tolist())
 
 
+def carregar_presencas():
+    registos = obter_aba_presencas().get_all_records()
+    df = pd.DataFrame(registos, columns=COLUNAS_PRESENCAS)
+    df["presente"] = pd.to_numeric(df["presente"], errors="coerce")
+    return df
+
+
 # ---------------- INTERFACE ----------------
 
 with st.sidebar:
-    st.markdown(f"👤 *Utilizador:* {st.session_state['user']}")
+    st.markdown(f"👤 Utilizador: {st.session_state['user']}")
     if st.button("🚪 Sair / Trocar utilizador"):
         for chave in ["password_correct", "user", "username"]:
             if chave in st.session_state:
@@ -86,12 +111,15 @@ st.title("📚 Gestor de Notas")
 
 df = carregar_dados()
 
-if st.session_state["user"] == "admin":
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["🔍 Pesquisar", "✏️ Introduzir / Atualizar", "📋 Listar todos", "🗑️ Remover aluno"]
-    )
-else:
-    tab1, tab2, tab3 = st.tabs(["🔍 Pesquisar", "✏️ Introduzir / Atualizar", "📋 Listar todos"])
+eh_admin = st.session_state["user"] == "admin"
+
+nomes_tabs = ["🔍 Pesquisar", "✏️ Introduzir / Atualizar", "📋 Listar todos", "✅ Presenças"]
+if eh_admin:
+    nomes_tabs.append("🗑️ Remover aluno")
+
+tabs = st.tabs(nomes_tabs)
+tab1, tab2, tab3, tab_pres = tabs[0], tabs[1], tabs[2], tabs[3]
+tab4 = tabs[4] if eh_admin else None
 
 # --- TAB 1: Pesquisar ---
 with tab1:
@@ -192,8 +220,84 @@ with tab3:
     else:
         st.dataframe(df, use_container_width=True)
 
+# --- TAB PRESENÇAS ---
+with tab_pres:
+    st.subheader("Presenças")
+
+    alunos_validos = df[df["Nome"].astype(str).str.strip() != ""]
+    if alunos_validos.empty:
+        st.info("Ainda não há alunos registados.")
+    else:
+        turmas_p = sorted(alunos_validos["Turma"].astype(str).unique().tolist())
+        turma_p = st.selectbox("Turma", turmas_p, key="pres_turma")
+
+        da_turma = alunos_validos[alunos_validos["Turma"].astype(str) == turma_p]
+        classes_p = sorted(da_turma["Classe"].astype(str).unique().tolist())
+        classe_p = st.selectbox("Classe", classes_p, key="pres_classe")
+
+        grupo = da_turma[da_turma["Classe"].astype(str) == classe_p]
+        lista_alunos = grupo["Nome"].tolist()
+
+        dia = st.date_input("Data", date.today(), key="pres_data")
+
+        existentes = carregar_presencas()
+        if existentes.empty:
+            ja_existe = False
+        else:
+            ja_existe = bool(
+                (
+                    (existentes["data"].astype(str) == str(dia))
+                    & (existentes["turma"].astype(str) == str(turma_p))
+                    & (existentes["classe"].astype(str) == str(classe_p))
+                ).any()
+            )
+
+        if ja_existe:
+            st.warning("Já há presenças guardadas para esta turma e classe neste dia.")
+
+        st.markdown("*Chamada* (desmarca quem faltou)")
+        marcados = {}
+        for a in lista_alunos:
+            marcados[a] = st.checkbox(
+                a, value=True, key=f"pres_{turma_p}{classe_p}{dia}_{a}"
+            )
+
+        if st.button("💾 Guardar presenças", disabled=ja_existe, key="pres_guardar"):
+            obter_aba_presencas().append_rows(
+                [
+                    [str(dia), str(turma_p), str(classe_p), a, 1 if p else 0]
+                    for a, p in marcados.items()
+                ]
+            )
+            st.success("Presenças guardadas!")
+            st.rerun()
+
+        if not existentes.empty:
+            st.markdown("---")
+            st.subheader("% de presenças")
+            ex = existentes[
+                (existentes["turma"].astype(str) == str(turma_p))
+                & (existentes["classe"].astype(str) == str(classe_p))
+            ]
+            if ex.empty:
+                st.info("Ainda não há presenças para esta turma.")
+            else:
+                resumo = (
+                    ex.groupby("aluno")["presente"]
+                    .agg(Aulas="count", Presenças="sum")
+                    .reset_index()
+                )
+                resumo["% presença"] = (resumo["Presenças"] / resumo["Aulas"] * 100).round(0)
+                st.dataframe(resumo, use_container_width=True)
+
+                with st.expander("Histórico"):
+                    st.dataframe(
+                        ex.sort_values("data", ascending=False),
+                        use_container_width=True,
+                    )
+
 # --- TAB 4: Remover aluno (só admin) ---
-if st.session_state["user"] == "admin":
+if eh_admin:
     with tab4:
         st.subheader("Remover aluno")
         if df.empty:
