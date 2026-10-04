@@ -17,7 +17,7 @@ COLUNAS_ATIV = ["data", "turma", "descricao", "foto"]
 COLUNAS_NOTA = ["teste1", "teste2", "teste3"]
 COLUNAS = ["Nome", "Turma", "Classe"] + COLUNAS_NOTA + ["Média"]
 
-st.set_page_config(page_title="Gestor de Notas", page_icon="📚", layout="wide")
+st.set_page_config(page_title="Gestor Escolar", page_icon="🏫", layout="wide")
 
 
 # ---------------- LOGIN ----------------
@@ -171,7 +171,7 @@ if turma_pai is not None:
     mostrar_atividades(ativ[ativ["turma"].astype(str) == turma_pai])
     st.stop()
 
-st.title("📚 Gestor de Notas")
+st.title("🏫 Gestor Escolar")
 
 df = carregar_dados()
 
